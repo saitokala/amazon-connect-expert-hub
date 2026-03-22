@@ -1,0 +1,4 @@
+{
+  "description": "MCP tool definitions for Amazon Connect. Extend this file with custom tool specifications as the Expert Hub grows.",
+  "tools": []
+}
