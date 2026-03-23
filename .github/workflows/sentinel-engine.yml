@@ -1,0 +1,59 @@
+name: Connect Sentinel Weekly Harvester
+on:
+  schedule:
+    - cron: '0 8 * * 0' # Wakes up every Sunday at 8:00 AM UTC
+  workflow_dispatch:      # Gives you the manual 'Run' button for today!
+permissions:
+  contents: write
+jobs:
+  execute-agent:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      - name: Run Agentic Markdown
+        env:
+          GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+        run: |
+          python3 -c "
+          import os, json, urllib.request, datetime
+          print('1. Reading Agent Instructions from Markdown...')
+          try:
+              with open('.github/workflows/connect-sentinel.agent.md', 'r') as f:
+                  agent_instructions = f.read()
+          except FileNotFoundError:
+              print('Error: Could not find connect-sentinel.agent.md')
+              exit(1)
+          print('2. Fetching Raw Intelligence via Jina Reader...')
+          # We are checking the AWS Contact Center blog as our primary data source
+          req = urllib.request.Request('https://r.jina.ai/https://aws.amazon.com/blogs/contact-center/', headers={'User-Agent': 'Mozilla/5.0'})
+          raw_data = urllib.request.urlopen(req).read().decode('utf-8')
+          print('3. Instructing Gemini...')
+          full_prompt = agent_instructions + '\n\n### RAW DATA TO PROCESS:\n' + raw_data[:20000]
+
+          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={os.environ[\"GEMINI_API_KEY\"]}'
+          payload = {'contents': [{'parts': [{'text': full_prompt}]}]}
+          data = json.dumps(payload).encode('utf-8')
+          try:
+              req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
+              response = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+              final_markdown = response['candidates'][0]['content']['parts'][0]['text']
+
+              date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+              filepath = f'knowledge/updates/weekly-update-{date_str}.md'
+              os.makedirs('knowledge/updates', exist_ok=True)
+
+              with open(filepath, 'w') as f:
+                  f.write(final_markdown)
+              print(f'Successfully synthesized intelligence to {filepath}')
+          except Exception as e:
+              print(f'Error calling Gemini API: {e}')
+              exit(1)
+          "
+      - name: Commit Findings to Knowledge Hub
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add knowledge/updates/
+          git commit -m "Automated Knowledge Hub Update: $(date +'%Y-%m-%d')" || echo "No new updates to commit"
+          git push
