@@ -2,58 +2,138 @@ name: Connect Sentinel Weekly Harvester
 on:
   schedule:
     - cron: '0 8 * * 0' # Wakes up every Sunday at 8:00 AM UTC
-  workflow_dispatch:      # Gives you the manual 'Run' button for today!
+  workflow_dispatch:      # Gives you the manual 'Run' button
 permissions:
   contents: write
+  issues: write
 jobs:
   execute-agent:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
-      - name: Run Agentic Markdown
+
+      - name: Fetch Intelligence Sources
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           python3 -c "
-          import os, json, urllib.request, datetime
-          print('1. Reading Agent Instructions from Markdown...')
+          import os, json, urllib.request, datetime, sys
+
+          date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+          collected = []
+
+          def fetch_url(label, url, headers=None):
+              print(f'  Fetching: {label}')
+              try:
+                  req = urllib.request.Request(url, headers=headers or {'User-Agent': 'Mozilla/5.0'})
+                  data = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', errors='replace')
+                  collected.append(f'### Source: {label}\n{data[:40000]}')
+                  print(f'  OK ({len(data)} chars)')
+              except Exception as e:
+                  print(f'  WARNING: Could not fetch {label}: {e}')
+                  collected.append(f'### Source: {label}\nFETCH FAILED: {e}')
+
+          print('=== Step 1: Reading Agent Instructions ===')
           try:
               with open('.github/workflows/connect-sentinel.agent.md', 'r') as f:
                   agent_instructions = f.read()
           except FileNotFoundError:
-              print('Error: Could not find connect-sentinel.agent.md')
-              exit(1)
-          print('2. Fetching Raw Intelligence via Jina Reader...')
-          # We are checking the AWS Contact Center blog as our primary data source
-          req = urllib.request.Request('https://r.jina.ai/https://aws.amazon.com/blogs/contact-center/', headers={'User-Agent': 'Mozilla/5.0'})
-          raw_data = urllib.request.urlopen(req).read().decode('utf-8')
-          print('3. Instructing Gemini...')
-          full_prompt = agent_instructions + '\n\n### RAW DATA TO PROCESS:\n' + raw_data[:20000]
+              print('ERROR: connect-sentinel.agent.md not found')
+              sys.exit(1)
+
+          print('=== Step 2: RSS Feeds (structured XML) ===')
+          rss_feeds = [
+              ('Connect Admin Guide RSS',      'https://docs.aws.amazon.com/connect/latest/adminguide/doc-history.xml.rss'),
+              ('Connect API Reference RSS',    'https://docs.aws.amazon.com/connect/latest/APIReference/doc-history.xml.rss'),
+              ('Agent Workspace RSS',          'https://docs.aws.amazon.com/agentworkspace/latest/devguide/doc-history.xml.rss'),
+              ('Lex V2 RSS',                   'https://docs.aws.amazon.com/lexv2/latest/dg/doc-history.xml.rss'),
+              ('Bedrock RSS',                  'https://docs.aws.amazon.com/bedrock/latest/userguide/doc-history.xml.rss'),
+              ('Amazon Q Business RSS',        'https://docs.aws.amazon.com/amazonq/latest/qbusiness-ug/doc-history.xml.rss'),
+              ('AWS Contact Center Blog RSS',  'https://aws.amazon.com/blogs/contact-center/feed/'),
+              ('AWS ML Blog RSS',              'https://aws.amazon.com/blogs/machine-learning/feed/'),
+              ('AWS Whats New RSS',            'https://aws.amazon.com/about-aws/whats-new/recent/feed/'),
+          ]
+          for label, url in rss_feeds:
+              fetch_url(label, url)
+
+          print('=== Step 3: AWS Contact Center Blog (Jina Reader) ===')
+          fetch_url(
+              'AWS Contact Center Blog (Jina)',
+              'https://r.jina.ai/https://aws.amazon.com/blogs/contact-center/',
+              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/markdown'}
+          )
+
+          print('=== Step 4: re:Post Amazon Connect Forum (Jina Reader) ===')
+          fetch_url(
+              're:Post Amazon Connect Tag (Jina)',
+              'https://r.jina.ai/https://repost.aws/tags/TAC0wz6wJtRbuJVD4X7tUmWA',
+              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/markdown'}
+          )
+
+          print('=== Step 5: Synthesising with Gemini ===')
+          raw_combined = '\n\n'.join(collected)
+          full_prompt = (
+              agent_instructions
+              + '\n\n---\n\n## RAW DATA TO PROCESS (from all sources):\n\n'
+              + raw_combined[:80000]
+          )
 
           url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent?key={os.environ[\"GEMINI_API_KEY\"]}'
           payload = {'contents': [{'parts': [{'text': full_prompt}]}]}
           data = json.dumps(payload).encode('utf-8')
           try:
               req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
-              response = json.loads(urllib.request.urlopen(req).read().decode('utf-8'))
+              response = json.loads(urllib.request.urlopen(req, timeout=120).read().decode('utf-8'))
               final_markdown = response['candidates'][0]['content']['parts'][0]['text']
-
-              date_str = datetime.datetime.now().strftime('%Y-%m-%d')
-              filepath = f'knowledge/updates/weekly-update-{date_str}.md'
-              os.makedirs('knowledge/updates', exist_ok=True)
-
-              with open(filepath, 'w') as f:
-                  f.write(final_markdown)
-              print(f'Successfully synthesized intelligence to {filepath}')
           except Exception as e:
-              print(f'Error calling Gemini API: {e}')
-              exit(1)
+              print(f'ERROR calling Gemini API: {e}')
+              sys.exit(1)
+
+          filepath = f'knowledge/updates/weekly-update-{date_str}.md'
+          os.makedirs('knowledge/updates', exist_ok=True)
+          with open(filepath, 'w') as f:
+              f.write(final_markdown)
+          print(f'Synthesised briefing written to {filepath}')
+
+          # Write run metadata for the observability step
+          meta = {'date': date_str, 'sources': len(collected), 'filepath': filepath}
+          with open('/tmp/sentinel-meta.json', 'w') as f:
+              json.dump(meta, f)
           "
+
       - name: Commit Findings to Knowledge Hub
         run: |
           git config --global user.name "github-actions[bot]"
           git config --global user.email "github-actions[bot]@users.noreply.github.com"
-          git add knowledge/updates/
-          git commit -m "Automated Knowledge Hub Update: $(date +'%Y-%m-%d')" || echo "No new updates to commit"
+          git add knowledge/
+          git commit -m "Sentinel Run: $(date +'%Y-%m-%d') -- automated knowledge update" || echo "Nothing new to commit"
           git push
+
+      - name: Open Observability Issue
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python3 -c "
+          import json, os, urllib.request, datetime
+
+          date_str = datetime.datetime.now().strftime('%Y-%m-%d')
+          try:
+              with open('/tmp/sentinel-meta.json') as f:
+                  meta = json.load(f)
+              body = f'## Sentinel Run: {date_str}\n\n- Sources fetched: {meta[\"sources\"]}\n- Output: \`{meta[\"filepath\"]}\`\n\nReview the weekly briefing for breaking changes, new features, and community signals.'
+          except Exception:
+              body = f'## Sentinel Run: {date_str}\n\nRun completed. Check \`knowledge/updates/\` for the latest briefing.'
+
+          token = os.environ['GITHUB_TOKEN']
+          repo = os.environ.get('GITHUB_REPOSITORY', 'saitokala/amazon-connect-expert-hub')
+          url = f'https://api.github.com/repos/{repo}/issues'
+          payload = json.dumps({'title': f'Sentinel Run: {date_str}', 'body': body, 'labels': ['sentinel']}).encode()
+          req = urllib.request.Request(url, data=payload, headers={
+              'Authorization': f'Bearer {token}',
+              'Content-Type': 'application/json',
+              'Accept': 'application/vnd.github+json'
+          })
+          urllib.request.urlopen(req)
+          print('Observability issue created')
+          "
