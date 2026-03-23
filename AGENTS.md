@@ -1,4 +1,28 @@
-# AGENTS.md — Amazon Connect Expert Hub
+# 🤖 Active Agentic Workflows
+
+This repository employs several automated agents to maintain its "Super Intelligent" state.
+
+### 1. The Sentinel (`connect-sentinel.agent.md`)
+
+* **Trigger:** Scheduled (Cron: Every Sunday at Midnight) & Manual Dispatch.
+* **Role:** The Harvester.
+* **Duties:** Scans HashiCorp Terraform releases, AWS official documentation, and community forums. Dumps raw findings into `knowledge/updates/`.
+
+### 2. The Synthesizer (`pattern-synthesizer.agent.md`)
+
+* **Trigger:** Triggers automatically when The Sentinel completes a run.
+* **Role:** The Architect.
+* **Duties:** Reads the raw weekly updates. If a consistent workaround or new standard is found, it formats it into a permanent Best Practice document and saves it to `knowledge/patterns/`.
+
+### 3. The Diagrammer (Manual Trigger via Codespace)
+
+* **Trigger:** Prompt-based via Kiro CLI / Gemini.
+* **Role:** The Visualizer.
+* **Duties:** Monitors the `/ingest/pending/` folder. Converts uploaded webinar screenshots or PDFs into Mermaid.js code and Terraform snippets.
+
+---
+
+## AGENTS.md — Amazon Connect Expert Hub
 
 This file provides context for all AI agents operating in this repository.
 
