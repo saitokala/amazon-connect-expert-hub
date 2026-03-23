@@ -31,7 +31,7 @@ jobs:
           print('3. Instructing Gemini...')
           full_prompt = agent_instructions + '\n\n### RAW DATA TO PROCESS:\n' + raw_data[:20000]
 
-          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={os.environ[\"GEMINI_API_KEY\"]}'
+          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-pro:generateContent?key={os.environ[\"GEMINI_API_KEY\"]}'
           payload = {'contents': [{'parts': [{'text': full_prompt}]}]}
           data = json.dumps(payload).encode('utf-8')
           try:
