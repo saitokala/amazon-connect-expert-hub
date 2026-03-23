@@ -1,4 +1,41 @@
 {
   "description": "MCP tool definitions for Amazon Connect. Extend this file with custom tool specifications as the Expert Hub grows.",
-  "tools": []
+  "tools": [
+    {
+      "name": "search_connect_patterns",
+      "description": "Searches the synthesized architectural patterns and best practices for Amazon Connect.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "query": { "type": "string", "description": "The architecture concept to search for (e.g., 'Lex V2 routing', 'Cross-region latency')" }
+        },
+        "required": ["query"]
+      },
+      "target_directory": "knowledge/patterns/"
+    },
+    {
+      "name": "get_verified_iac",
+      "description": "Retrieves the official, idempotent Terraform modules or CloudFormation blueprints for deploying Connect resources.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "resource_type": { "type": "string", "description": "The infrastructure component (e.g., 'contact-flow', 'instance', 'lambda-integration')" }
+        },
+        "required": ["resource_type"]
+      },
+      "target_directory": "iac/"
+    },
+    {
+      "name": "check_community_alerts",
+      "description": "Searches recent AWS re:Post and forum discussions for bugs or undocumented workarounds.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "component": { "type": "string", "description": "The Amazon Connect feature to check for community issues." }
+        },
+        "required": ["component"]
+      },
+      "target_directory": "knowledge/forums/"
+    }
+  ]
 }
