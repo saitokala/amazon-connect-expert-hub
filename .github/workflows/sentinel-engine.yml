@@ -6,40 +6,77 @@ on:
 permissions:
   contents: write
   issues: write
+env:
+  ACTIONS_STEP_DEBUG: true
 jobs:
   execute-agent:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
 
       - name: Fetch Intelligence Sources and Synthesise
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
           cat > /tmp/sentinel.py << 'PYTHON_EOF'
-          import os, json, urllib.request, datetime, sys
+          import os, json, urllib.request, urllib.error, datetime, sys, time
 
           date_str = datetime.datetime.now().strftime('%Y-%m-%d')
           collected = []
 
-          def fetch_url(label, url, headers=None):
-              print(f'  Fetching: {label}')
-              try:
-                  h = headers or {'User-Agent': 'Mozilla/5.0'}
-                  req = urllib.request.Request(url, headers=h)
-                  data = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', errors='replace')
-                  collected.append(f'### Source: {label}\n{data[:40000]}')
-                  print(f'  OK ({len(data)} chars)')
-              except Exception as e:
-                  print(f'  WARNING: Could not fetch {label}: {e}')
-                  collected.append(f'### Source: {label}\nFETCH FAILED: {e}')
+          def debug(msg):
+              print(f'[DEBUG] {msg}', flush=True)
+
+          def fetch_url(label, url, headers=None, fallback_urls=None):
+              urls_to_try = [url] + (fallback_urls or [])
+              for attempt_url in urls_to_try:
+                  print(f'  Fetching: {label} -> {attempt_url}')
+                  try:
+                      h = headers or {'User-Agent': 'Mozilla/5.0'}
+                      req = urllib.request.Request(attempt_url, headers=h)
+                      data = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', errors='replace')
+                      collected.append(f'### Source: {label}\n{data[:40000]}')
+                      print(f'  OK ({len(data)} chars)')
+                      return
+                  except Exception as e:
+                      print(f'  WARNING: Could not fetch {label} from {attempt_url}: {e}')
+              collected.append(f'### Source: {label}\nFETCH FAILED: all URLs tried')
+
+          def call_gemini_with_retry(gemini_url, body, max_retries=6):
+              for attempt in range(max_retries):
+                  debug(f'Gemini API call attempt {attempt + 1}/{max_retries}')
+                  try:
+                      req = urllib.request.Request(
+                          gemini_url, data=body,
+                          headers={'Content-Type': 'application/json'}
+                      )
+                      response = json.loads(urllib.request.urlopen(req, timeout=180).read().decode('utf-8'))
+                      debug('Gemini API call succeeded')
+                      return response['candidates'][0]['content']['parts'][0]['text']
+                  except urllib.error.HTTPError as e:
+                      error_body = e.read().decode('utf-8', errors='replace')
+                      debug(f'HTTP {e.code} error: {error_body[:500]}')
+                      if e.code == 429:
+                          wait = min(30 * (attempt + 1), 300)
+                          print(f'  429 rate limit hit, retrying in {wait}s (attempt {attempt + 1}/{max_retries})...')
+                          time.sleep(wait)
+                          continue
+                      raise
+                  except Exception as e:
+                      debug(f'API error ({type(e).__name__}): {e}')
+                      if attempt < max_retries - 1:
+                          time.sleep(10)
+                          continue
+                      raise
+              raise RuntimeError(f'Gemini API rate limit exceeded after {max_retries} retries')
 
           # Step 1: Read agent instructions
           print('=== Step 1: Reading Agent Instructions ===')
           try:
               with open('.github/workflows/connect-sentinel.agent.md', 'r') as f:
                   agent_instructions = f.read()
+              debug(f'Agent instructions loaded ({len(agent_instructions)} chars)')
           except FileNotFoundError:
               print('ERROR: connect-sentinel.agent.md not found')
               sys.exit(1)
@@ -47,18 +84,36 @@ jobs:
           # Step 2: RSS feeds
           print('=== Step 2: RSS Feeds ===')
           rss_feeds = [
-              ('Connect Admin Guide RSS',     'https://docs.aws.amazon.com/connect/latest/adminguide/doc-history.xml.rss'),
-              ('Connect API Reference RSS',   'https://docs.aws.amazon.com/connect/latest/APIReference/doc-history.xml.rss'),
-              ('Agent Workspace RSS',         'https://docs.aws.amazon.com/agentworkspace/latest/devguide/doc-history.xml.rss'),
-              ('Lex V2 RSS',                  'https://docs.aws.amazon.com/lexv2/latest/dg/doc-history.xml.rss'),
-              ('Bedrock RSS',                 'https://docs.aws.amazon.com/bedrock/latest/userguide/doc-history.xml.rss'),
-              ('Amazon Q Business RSS',       'https://docs.aws.amazon.com/amazonq/latest/qbusiness-ug/doc-history.xml.rss'),
-              ('AWS Contact Center Blog RSS', 'https://aws.amazon.com/blogs/contact-center/feed/'),
-              ('AWS ML Blog RSS',             'https://aws.amazon.com/blogs/machine-learning/feed/'),
-              ('AWS Whats New RSS',           'https://aws.amazon.com/about-aws/whats-new/recent/feed/'),
+              ('Connect Admin Guide RSS',
+               'https://docs.aws.amazon.com/connect/latest/adminguide/doc-history.xml.rss',
+               []),
+              ('Connect API Reference RSS',
+               'https://docs.aws.amazon.com/connect/latest/APIReference/doc-history.xml.rss',
+               ['https://docs.aws.amazon.com/connect/latest/APIReference/doc-history-rss.xml']),
+              ('Agent Workspace RSS',
+               'https://docs.aws.amazon.com/agentworkspace/latest/devguide/doc-history.xml.rss',
+               ['https://docs.aws.amazon.com/agentworkspace/latest/devguide/developer-guide.pdf.rss']),
+              ('Lex V2 RSS',
+               'https://docs.aws.amazon.com/lexv2/latest/dg/doc-history.xml.rss',
+               ['https://docs.aws.amazon.com/lex/latest/dg/doc-history.xml.rss']),
+              ('Bedrock RSS',
+               'https://docs.aws.amazon.com/bedrock/latest/userguide/doc-history.xml.rss',
+               []),
+              ('Amazon Q Business RSS',
+               'https://docs.aws.amazon.com/amazonq/latest/qbusiness-ug/doc-history.xml.rss',
+               []),
+              ('AWS Contact Center Blog RSS',
+               'https://aws.amazon.com/blogs/contact-center/feed/',
+               []),
+              ('AWS ML Blog RSS',
+               'https://aws.amazon.com/blogs/machine-learning/feed/',
+               []),
+              ('AWS Whats New RSS',
+               'https://aws.amazon.com/about-aws/whats-new/recent/feed/',
+               []),
           ]
-          for label, url in rss_feeds:
-              fetch_url(label, url)
+          for label, url, fallbacks in rss_feeds:
+              fetch_url(label, url, fallback_urls=fallbacks)
 
           # Step 3: Jina Reader sources
           print('=== Step 3: Jina Reader Sources ===')
@@ -73,6 +128,8 @@ jobs:
               headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/markdown'}
           )
 
+          debug(f'Total sources collected: {len(collected)}')
+
           # Step 4: Call Gemini
           print('=== Step 4: Synthesising with Gemini ===')
           raw_combined = '\n\n'.join(collected)
@@ -81,27 +138,28 @@ jobs:
               + '\n\n---\n\n## RAW DATA TO PROCESS (from all sources):\n\n'
               + raw_combined[:80000]
           )
+          debug(f'Prompt size: {len(full_prompt)} chars')
 
           gemini_url = (
               'https://generativelanguage.googleapis.com/v1beta/models/'
-              'gemini-3.1-pro:generateContent?key=' + os.environ['GEMINI_API_KEY']
+              'gemini-2.5-flash:generateContent?key=' + os.environ['GEMINI_API_KEY']
           )
           payload = {'contents': [{'parts': [{'text': full_prompt}]}]}
           body = json.dumps(payload).encode('utf-8')
+
           try:
-              req = urllib.request.Request(gemini_url, data=body, headers={'Content-Type': 'application/json'})
-              response = json.loads(urllib.request.urlopen(req, timeout=120).read().decode('utf-8'))
-              final_markdown = response['candidates'][0]['content']['parts'][0]['text']
+              final_markdown = call_gemini_with_retry(gemini_url, body)
           except Exception as e:
               print(f'ERROR calling Gemini API: {e}')
               sys.exit(1)
 
           # Step 5: Write output
-          filepath = f'knowledge/updates/weekly-update-{date_str}.md'
+          filepath = f'knowledge/updates/{date_str}-weekly.md'
           os.makedirs('knowledge/updates', exist_ok=True)
           with open(filepath, 'w') as f:
               f.write(final_markdown)
           print(f'Briefing written to {filepath}')
+          debug(f'Output file size: {len(final_markdown)} chars')
 
           meta = {'date': date_str, 'sources': len(collected), 'filepath': filepath}
           with open('/tmp/sentinel-meta.json', 'w') as f:
