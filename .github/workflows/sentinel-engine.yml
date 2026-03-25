@@ -2,7 +2,7 @@ name: Connect Sentinel Weekly Harvester
 on:
   schedule:
     - cron: '0 8 * * 0' # Wakes up every Sunday at 8:00 AM UTC
-  workflow_dispatch:      # Gives you the manual Run button
+  workflow_dispatch:      # Gives you the manual 'Run' button
 permissions:
   contents: write
   issues: write
@@ -14,31 +14,25 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v5
-
-      - name: Fetch Intelligence Sources and Synthesise
+        uses: actions/checkout@v4
+      - name: Fetch Intelligence Sources
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         run: |
-          cat > /tmp/sentinel.py << 'PYTHON_EOF'
+          python3 -c "
           import os, json, urllib.request, datetime, sys, time
-
           date_str = datetime.datetime.now().strftime('%Y-%m-%d')
           collected = []
-
           def fetch_url(label, url, headers=None):
               print(f'  Fetching: {label}')
               try:
-                  h = headers or {'User-Agent': 'Mozilla/5.0'}
-                  req = urllib.request.Request(url, headers=h)
+                  req = urllib.request.Request(url, headers=headers or {'User-Agent': 'Mozilla/5.0'})
                   data = urllib.request.urlopen(req, timeout=30).read().decode('utf-8', errors='replace')
-                  collected.append(f'### Source: {label}\n{data[:40000]}')
+                  collected.append(f'### Source: {label}\n{data[:10000]}')
                   print(f'  OK ({len(data)} chars)')
               except Exception as e:
                   print(f'  WARNING: Could not fetch {label}: {e}')
                   collected.append(f'### Source: {label}\nFETCH FAILED: {e}')
-
-          # Step 1: Read agent instructions (with fallback)
           print('=== Step 1: Reading Agent Instructions ===')
           try:
               with open('.github/workflows/connect-sentinel.agent.md', 'r') as f:
@@ -46,71 +40,55 @@ jobs:
               print('  OK: loaded connect-sentinel.agent.md')
           except FileNotFoundError:
               print('  WARNING: connect-sentinel.agent.md not found, using default instructions')
-              agent_instructions = (
-                  'You are an Amazon Connect intelligence analyst. '
-                  'Synthesize the raw data below into a concise weekly briefing in Markdown. '
-                  'Use these sections: '
-                  '## Breaking Changes & IaC Updates, '
-                  '## New Blueprints & Features, '
-                  '## Community Pulse & Workarounds. '
-                  'Focus only on Amazon Connect, Lex, Bedrock, and related contact-centre services.'
-              )
-
-          # Step 2: RSS feeds
-          print('=== Step 2: RSS Feeds ===')
+              agent_instructions = 'You are an Amazon Connect intelligence analyst. Synthesize the raw data below into a concise weekly briefing in Markdown. Focus on Breaking Changes, IaC Updates, and Community Pulse.'
+          print('=== Step 2: GitHub API (IaC Repositories) ===')
+          fetch_url(
+              'Terraform Provider AWS (Latest Release)',
+              'https://api.github.com/repos/hashicorp/terraform-provider-aws/releases/latest',
+              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/vnd.github.v3+json'}
+          )
+          fetch_url(
+              'AWS CloudFormation Templates (Recent Commits)',
+              'https://api.github.com/repos/aws-cloudformation/aws-cloudformation-templates/commits?per_page=5',
+              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/vnd.github.v3+json'}
+          )
+          print('=== Step 3: RSS Feeds (Trimmed for Rate Limits) ===')
           rss_feeds = [
-              ('Connect Admin Guide RSS',     'https://docs.aws.amazon.com/connect/latest/adminguide/doc-history.xml.rss'),
-              ('Connect API Reference RSS',   'https://docs.aws.amazon.com/connect/latest/APIReference/doc-history.xml.rss'),
-              ('Agent Workspace RSS',         'https://docs.aws.amazon.com/agentworkspace/latest/devguide/doc-history.xml.rss'),
-              ('Lex V2 RSS',                  'https://docs.aws.amazon.com/lexv2/latest/dg/doc-history.xml.rss'),
-              ('Bedrock RSS',                 'https://docs.aws.amazon.com/bedrock/latest/userguide/doc-history.xml.rss'),
-              ('Amazon Q Business RSS',       'https://docs.aws.amazon.com/amazonq/latest/qbusiness-ug/doc-history.xml.rss'),
-              ('AWS Contact Center Blog RSS', 'https://aws.amazon.com/blogs/contact-center/feed/'),
-              ('AWS ML Blog RSS',             'https://aws.amazon.com/blogs/machine-learning/feed/'),
-              ('AWS Whats New RSS',           'https://aws.amazon.com/about-aws/whats-new/recent/feed/'),
+              ('Connect Admin Guide RSS',      'https://docs.aws.amazon.com/connect/latest/adminguide/doc-history.xml.rss'),
+              ('Connect API Reference RSS',    'https://docs.aws.amazon.com/connect/latest/APIReference/doc-history.xml.rss'),
+              ('Lex V2 RSS',                   'https://docs.aws.amazon.com/lexv2/latest/dg/doc-history.xml.rss'),
+              ('AWS Contact Center Blog RSS',  'https://aws.amazon.com/blogs/contact-center/feed/')
           ]
           for label, url in rss_feeds:
               fetch_url(label, url)
-
-          # Step 3: Jina Reader sources
-          print('=== Step 3: Jina Reader Sources ===')
-          fetch_url(
-              'AWS Contact Center Blog (Jina)',
-              'https://r.jina.ai/https://aws.amazon.com/blogs/contact-center/',
-              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/markdown'}
-          )
+          print('=== Step 4: Forums & Blogs (Jina Reader) ===')
           fetch_url(
               're:Post Amazon Connect Tag (Jina)',
               'https://r.jina.ai/https://repost.aws/tags/TAC0wz6wJtRbuJVD4X7tUmWA',
               headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'text/markdown'}
           )
-
-          # Step 4: Call Gemini with 429 retry
-          print('=== Step 4: Synthesising with Gemini ===')
+          print('=== Step 5: Synthesising with Gemini ===')
           raw_combined = '\n\n'.join(collected)
           full_prompt = (
               agent_instructions
               + '\n\n---\n\n## RAW DATA TO PROCESS (from all sources):\n\n'
-              + raw_combined[:80000]
+              + raw_combined[:20000]
           )
-
-          gemini_url = (
-              'https://generativelanguage.googleapis.com/v1beta/models/'
-              'gemini-2.5-flash:generateContent?key=' + os.environ['GEMINI_API_KEY']
-          )
+          url = f'https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={os.environ[\"GEMINI_API_KEY\"]}'
           payload = {'contents': [{'parts': [{'text': full_prompt}]}]}
-          body = json.dumps(payload).encode('utf-8')
+          data = json.dumps(payload).encode('utf-8')
           final_markdown = None
-          for attempt in range(5):
+
+          for attempt in range(3):
               try:
-                  req = urllib.request.Request(gemini_url, data=body, headers={'Content-Type': 'application/json'})
+                  req = urllib.request.Request(url, data=data, headers={'Content-Type': 'application/json'})
                   response = json.loads(urllib.request.urlopen(req, timeout=120).read().decode('utf-8'))
                   final_markdown = response['candidates'][0]['content']['parts'][0]['text']
                   break
               except urllib.error.HTTPError as e:
                   if e.code == 429:
-                      wait = 2 ** attempt * 30
-                      print(f'  429 rate limit hit, retrying in {wait}s (attempt {attempt+1}/5)...')
+                      wait = 2 ** attempt * 15
+                      print(f'  429 rate limit hit, retrying in {wait}s...')
                       time.sleep(wait)
                   else:
                       print(f'ERROR calling Gemini API: {e}')
@@ -119,23 +97,17 @@ jobs:
                   print(f'ERROR calling Gemini API: {e}')
                   sys.exit(1)
           if final_markdown is None:
-              print('ERROR: Gemini API rate limit exceeded after 5 retries')
+              print('ERROR: Gemini API rate limit exceeded after retries')
               sys.exit(1)
-
-          # Step 5: Write output
           filepath = f'knowledge/updates/weekly-update-{date_str}.md'
           os.makedirs('knowledge/updates', exist_ok=True)
           with open(filepath, 'w') as f:
               f.write(final_markdown)
-          print(f'Briefing written to {filepath}')
-
+          print(f'Synthesised briefing written to {filepath}')
           meta = {'date': date_str, 'sources': len(collected), 'filepath': filepath}
           with open('/tmp/sentinel-meta.json', 'w') as f:
               json.dump(meta, f)
-          PYTHON_EOF
-
-          python3 /tmp/sentinel.py
-
+          "
       - name: Commit Findings to Knowledge Hub
         run: |
           git config --global user.name "github-actions[bot]"
@@ -143,27 +115,19 @@ jobs:
           git add knowledge/
           git commit -m "Sentinel Run: $(date +'%Y-%m-%d') -- automated knowledge update" || echo "Nothing new to commit"
           git push
-
       - name: Open Observability Issue
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          cat > /tmp/observability.py << 'PYTHON_EOF'
+          python3 -c "
           import json, os, urllib.request, datetime
-
           date_str = datetime.datetime.now().strftime('%Y-%m-%d')
           try:
               with open('/tmp/sentinel-meta.json') as f:
                   meta = json.load(f)
-              body = (
-                  f'## Sentinel Run: {date_str}\n\n'
-                  f'- Sources fetched: {meta["sources"]}\n'
-                  f'- Output: `{meta["filepath"]}`\n\n'
-                  'Review the weekly briefing for breaking changes, new features, and community signals.'
-              )
+              body = f'## Sentinel Run: {date_str}\n\n- Sources fetched: {meta[\"sources\"]}\n- Output: \`{meta[\"filepath\"]}\`\n\nReview the weekly briefing for breaking changes, new features, and community signals.'
           except Exception:
-              body = f'## Sentinel Run: {date_str}\n\nRun completed. Check `knowledge/updates/` for the latest briefing.'
-
+              body = f'## Sentinel Run: {date_str}\n\nRun completed. Check \`knowledge/updates/\` for the latest briefing.'
           token = os.environ['GITHUB_TOKEN']
           repo = os.environ.get('GITHUB_REPOSITORY', 'saitokala/amazon-connect-expert-hub')
           url = f'https://api.github.com/repos/{repo}/issues'
@@ -175,6 +139,4 @@ jobs:
           })
           urllib.request.urlopen(req)
           print('Observability issue created')
-          PYTHON_EOF
-
-          python3 /tmp/observability.py
+          "
