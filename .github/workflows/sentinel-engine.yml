@@ -18,6 +18,7 @@ jobs:
       - name: Fetch Intelligence Sources
         env:
           GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python3 -c "
           import os, json, urllib.request, datetime, sys, time
@@ -41,17 +42,25 @@ jobs:
           except FileNotFoundError:
               print('  WARNING: connect-sentinel.agent.md not found, using default instructions')
               agent_instructions = 'You are an Amazon Connect intelligence analyst. Synthesize the raw data below into a concise weekly briefing in Markdown. Focus on Breaking Changes, IaC Updates, and Community Pulse.'
-          print('=== Step 2: GitHub API (IaC Repositories) ===')
-          fetch_url(
-              'Terraform Provider AWS (Latest Release)',
-              'https://api.github.com/repos/hashicorp/terraform-provider-aws/releases/latest',
-              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/vnd.github.v3+json'}
-          )
-          fetch_url(
-              'AWS CloudFormation Templates (Recent Commits)',
-              'https://api.github.com/repos/aws-cloudformation/aws-cloudformation-templates/commits?per_page=5',
-              headers={'User-Agent': 'Mozilla/5.0', 'Accept': 'application/vnd.github.v3+json'}
-          )
+          print('=== Step 2: GitHub API (IaC & Connect SDKs) ===')
+          # Using GITHUB_TOKEN to prevent GitHub API rate limits
+          gh_token = os.environ.get('GITHUB_TOKEN', '')
+          gh_headers = {'User-Agent': 'Mozilla/5.0', 'Accept': 'application/vnd.github.v3+json'}
+          if gh_token: gh_headers['Authorization'] = f'Bearer {gh_token}'
+          github_targets = [
+              ('Terraform Provider AWS', 'hashicorp/terraform-provider-aws'),
+              ('CloudFormation Templates', 'aws-cloudformation/aws-cloudformation-templates'),
+              ('Connect Streams API (CCP)', 'amazon-connect/amazon-connect-streams'),
+              ('Connect Chat UI', 'amazon-connect/amazon-connect-chat-ui'),
+              ('Connect ChatJS', 'amazon-connect/amazon-connect-chatjs')
+          ]
+
+          for label, repo in github_targets:
+              fetch_url(
+                  f'{label} (Recent Commits)',
+                  f'https://api.github.com/repos/{repo}/commits?per_page=3',
+                  headers=gh_headers
+              )
           print('=== Step 3: RSS Feeds (Trimmed for Rate Limits) ===')
           rss_feeds = [
               ('Connect Admin Guide RSS',      'https://docs.aws.amazon.com/connect/latest/adminguide/doc-history.xml.rss'),
