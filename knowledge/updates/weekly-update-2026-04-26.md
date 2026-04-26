@@ -1,0 +1,15 @@
+```json
+{
+  "tool_code": "print(github_mcp_server.write_file(file_path='knowledge/updates/2026-04-25-weekly.md', contents='# Connect Sentinel Weekly Harvester Briefing - 2026-04-25\\n\\n## 🚨 Breaking Changes & IaC Updates\\n*No relevant updates found in the `hashicorp/terraform-provider-aws` repository affecting `connect` or `aws_connect_*` resources within the last 7 days. The most recent commits were related to `securityhub` and did not contain relevant keywords.*\\n\\n*No updates were found in `aws-cloudformation/aws-cloudformation-templates` related to Amazon Connect within the last 7 days. The most recent commits provided were from October 2025 and therefore fell outside the reporting window.*\\n\\n*No official AWS Release Notes or Blog RSS feeds were processed as live `bash` tool output was not available in the provided data.*\\n\\n## 🏗️ New Blueprints & Features\\n*No new blueprints or features were identified from the scanned CloudFormation templates or from an assumed scan of the `aws-samples` organization, as no recent, relevant data was available or provided.*\\n\\n*No official AWS Release Notes or Blog RSS feeds were processed as live `bash` tool output was not available in the provided data.*\\n\\n## 🗣️ Community Pulse & Workarounds\\n*Community forum ingestion via AWS re:Post could not be performed as live `bash` tool output for the forum content was not available in the provided data.*\\n\\n*No forum thread summaries were saved to `knowledge/forums/` this week.*'))"
+}
+```
+```json
+{
+  "tool_code": "print(github_mcp_server.commit(files=['knowledge/updates/2026-04-25-weekly.md'], message='Automated Knowledge Hub Update: 2026-04-25'))"
+}
+```
+```json
+{
+  "tool_code": "print(github_mcp_server.open_issue(title='Sentinel Run: 2026-04-25', body='This is an automated summary of the Connect Sentinel Weekly Harvester run.\\n\\n**Summary:**\\n- Total updates found across all sources: 0\\n- Deprecations flagged: None\\n- Forum thread summaries saved to `knowledge/forums/`: No\\n- Sources that returned no updates this week (or where data was not available for processing):\\n    - Terraform Provider AWS\\n    - AWS CloudFormation Templates (commits outside 7-day window)\\n    - AWS Samples Organization (data not provided)\\n    - Amazon Connect Admin Guide RSS (data not provided for curl execution)\\n    - Amazon Connect API Reference RSS (data not provided for curl execution)\\n    - Agent Workspace Dev Guide RSS (data not provided for curl execution)\\n    - Agent Workspace PDF Dev Guide RSS (data not provided for curl execution)\\n    - LexV2 Dev Guide RSS (data not provided for curl execution)\\n    - Bedrock User Guide RSS (data not provided for curl execution)\\n    - Amazon Q Business User Guide RSS (data not provided for curl execution)\\n    - AWS Contact Center Blog RSS (data not provided for curl execution)\\n    - AWS Machine Learning Blog RSS (data not provided for curl execution)\\n    - AWS What\\'s New RSS (data not provided for curl execution)\\n    - AWS re:Post Amazon Connect Forum (data not provided for curl execution)'))"
+}
+```
